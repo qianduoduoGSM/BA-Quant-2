@@ -1,0 +1,452 @@
+# =============================================================================
+# 数据获取规范 (Data Acquisition Specification)
+# -----------------------------------------------------------------------------
+# 标的: 中国银行 (Bank of China, A+H 股)
+# 范围: 近五年股票数据
+# 数据源: Tushare Pro (通过 MCP 连接器 mcp__tushareMcp__*)
+# 用途: 作为未来规范化、可复用数据获取工作的统一规范
+# 版本: 1.0.0
+# 创建: 2026-07-04
+# =============================================================================
+# 设计原则:
+#   1. 单一事实来源 (Single Source of Truth) —— 本文件是数据获取的唯一规范
+#   2. 原始数据不可变 (raw 层只追加不改写)，加工层可派生
+#   3. 分层获取 (Tier 1 必选 → Tier 4 可选)，按需扩展
+#   4. 可重入、可增量、可校验 —— 任意一步失败可从断点续跑
+#   5. 机器可解析 (YAML) —— 可被 Python 获取脚本直接读取驱动
+# =============================================================================
+
+spec:
+  version: "1.0.0"
+  name: boc-stock-data-acquisition
+  title: 中国银行近五年股票数据获取规范
+  created_at: "2026-07-04"
+  owner: AI-Quant
+  data_source:
+    provider: Tushare Pro
+    connector: tushareMcp            # MCP 连接器名
+    tool_prefix: "mcp__tushareMcp__" # 工具名前缀，拼接 method 即为完整工具名
+    doc_base: "https://tushare.pro/document/2"
+
+  # ---------------------------------------------------------------------------
+  # 1. 获取目标
+  # ---------------------------------------------------------------------------
+  objectives:
+    - 获取中国银行 A 股 (601988.SH) 近五年全维度股票数据
+    - 补充 H 股 (03988.HK) 行情与财务数据，支持 A/H 联动分析
+    - 建立可复用、可增量更新、可质量校验的数据资产
+    - 为后续量化回测 / 因子研究 / 估值建模提供干净数据底座
+
+  # ---------------------------------------------------------------------------
+  # 2. 标的定义
+  # ---------------------------------------------------------------------------
+  target_securities:
+    primary:
+      name: 中国银行
+      ts_code: "601988.SH"        # 沪市 A 股 (主标的)
+      exchange: SSE
+      list_date_ref: "2006-07-05"  # A 股上市日 (参考，实际以 stock_basic 为准)
+      industry: 银行
+      comp_type: "2"               # 财务报表公司类型: 2=银行 (income/balancesheet/cashflow 必填)
+    supplementary:
+      - name: 中国银行(H股)
+        ts_code: "03988.HK"        # 港股 H 股
+        exchange: HKEX
+        note: A/H 折溢价与联动分析
+    benchmarks:                    # 对标基准 (指数)
+      - { name: 上证指数,     ts_code: "000001.SH" }
+      - { name: 沪深300,      ts_code: "000300.SH" }
+      - { name: 中证银行,     ts_code: "399986.SZ" }
+      - { name: 申万银行,     ts_code: "801780.SI" }   # 通过 sw_daily 获取
+
+  # ---------------------------------------------------------------------------
+  # 3. 时间范围
+  # ---------------------------------------------------------------------------
+  time_range:
+    lookback_years: 5
+    # 默认按运行日回溯 5 年；如需固定窗口，直接覆盖 start_date / end_date
+    start_date: "20210701"         # ~ 运行日 - 5 年 (对齐月初)
+    end_date: "auto"               # auto = 经 trade_cal 解析为 ≤ 今天的最后一个交易日
+    timezone: "Asia/Shanghai"
+    note: 财务/股东类数据按报告期 (period) 拉取，覆盖 start_date 前后各一个年报周期
+
+  # ---------------------------------------------------------------------------
+  # 4. 前置条件 (准入与权限)
+  # ---------------------------------------------------------------------------
+  prerequisites:
+    token:
+      required: true
+      env_var: TUSHARE_TOKEN       # Tushare Pro 接口令牌
+      note: MCP 连接器需在配置中注入有效 token
+    points_threshold:
+      minimum: 2000                # daily_basic / moneyflow 等需 2000 积分
+      recommended: 5000            # stk_factor_pro / 分钟线等高级接口建议 5000+
+    connector:
+      must_be_connected: tushareMcp
+      verify_command: "调用 stock_basic 限量返回确认连通性与权限"
+    calendar:
+      precompute_trade_cal: true   # 先用 trade_cal 生成本区间交易日历，驱动按日切片
+    storage:
+      min_free_space_gb: 2
+      format: parquet              # 列式存储，适合时序
+      encoding: utf-8
+
+  # ---------------------------------------------------------------------------
+  # 5. 数据域 (按优先级分层)
+  #    每个数据域: method=Tushare接口名, params=固定参数, fields=取数字段
+  #    存储路径: data/raw/{domain}/{ts_code}/{year}.parquet (时序) 或
+  #              data/raw/{domain}/{ts_code}.parquet   (非时序/低频)
+  # ---------------------------------------------------------------------------
+  data_domains:
+
+    # ===== Tier 1: 核心必选 (行情 + 基础 + 复权) =====
+    - tier: 1
+      domain: basic_info
+      desc: 基础信息 (一次性，低频全量)
+      schedule: on_demand          # 标的变更或每季度刷新
+      items:
+        - method: stock_basic
+          params: { ts_code: "601988.SH", fields: "*" }
+          key_fields: [ts_code, symbol, name, area, industry, market, list_date, delist_date]
+          store: data/raw/basic_info/stock_basic.parquet
+        - method: namechange
+          params: { ts_code: "601988.SH" }
+          key_fields: [ts_code, name, start_date, end_date, change_reason]
+        - method: stock_company
+          params: { ts_code: "601988.SH" }
+          key_fields: [ts_code, chairman, manager, main_business, employees]
+
+    - tier: 1
+      domain: daily_quotes
+      desc: 日线行情 (核心时序)
+      schedule: daily              # 每交易日盘后增量
+      frequency: daily
+      items:
+        - method: daily
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount]
+          store: data/raw/daily_quotes/601988.SH/{year}.parquet
+          pagination: by_year      # 按年切片，避免单次超限
+        - method: daily_basic
+          desc: 每日指标 (PE/PB/换手率/市值)
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [ts_code, trade_date, turnover_rate, pe, pe_ttm, pb, ps, ps_ttm, total_mv, circ_mv, dv_ratio, dv_ttm]
+          store: data/raw/daily_quotes/601988.SH_daily_basic/{year}.parquet
+          points_required: 2000
+        - method: adj_factor
+          desc: 复权因子 (前/后复权计算依据)
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [ts_code, trade_date, adj_factor]
+          store: data/raw/daily_quotes/601988.SH_adj_factor/{year}.parquet
+        - method: stk_limit
+          desc: 每日涨跌停价
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [ts_code, trade_date, up_limit, down_limit, pre_close]
+
+    # ===== Tier 2: 重要 (资金 + 财务 + 股东) =====
+    - tier: 2
+      domain: capital_flow
+      desc: 资金与交易行为
+      schedule: daily
+      items:
+        - method: moneyflow
+          desc: 个股资金流向 (大单/小单)
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [ts_code, trade_date, buy_sm_amount, sell_sm_amount, buy_lg_amount, sell_lg_amount, net_mf_amount]
+          points_required: 2000
+        - method: moneyflow_ths
+          desc: 同花顺个股资金流向
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: margin_detail
+          desc: 融资融券明细 (银行股两融活跃)
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [trade_date, ts_code, rzye, rqye, rzmre, rqyl, rzrqye]
+        - method: hk_hold
+          desc: 沪深港通持股 (北向持股量, 银行股外资重要信号)
+          params_template: { code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          key_fields: [code, trade_date, name, vol, ratio, amount]
+          note: 参数名为 code 而非 ts_code
+        - method: hsgt_top10
+          desc: 沪深港通十大成交股
+          params_template: { start_date: "{start}", end_date: "{end}" }
+          filter: ts_code == 601988.SH
+
+    - tier: 2
+      domain: financials
+      desc: 财务三表 + 指标 (银行专项, comp_type=2)
+      schedule: quarterly           # 每报告期披露后更新
+      frequency: quarterly
+      items:
+        - method: income
+          desc: 利润表
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}", comp_type: "2" }
+          bank_focus: [int_income, n_commis_income, n_income, n_income_attr_p, operate_profit, total_revenue]
+          store: data/raw/financials/601988.SH_income.parquet
+        - method: balancesheet
+          desc: 资产负债表
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}", comp_type: "2" }
+          bank_focus: [total_assets, total_liab, total_hldr_eqy_inc_min_int, loans_..., deposits_...]
+        - method: cashflow
+          desc: 现金流量表
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}", comp_type: "2" }
+        - method: fina_indicator
+          desc: 财务指标 (ROE/不良率/拨备覆盖率/资本充足率)
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          bank_focus: [roe, roa, bad_debt_ratio, provision_cover, capital_adequacy_ratio, npl_ratio]
+          points_required: 2000
+        - method: dividend
+          desc: 分红送股 (银行股高股息特征)
+          params: { ts_code: "601988.SH" }
+        - method: forecast
+          desc: 业绩预告
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: express
+          desc: 业绩快报
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+
+    - tier: 2
+      domain: shareholders
+      desc: 股东与公司治理
+      schedule: quarterly
+      items:
+        - method: top10_holders
+          desc: 十大股东
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: top10_floatholders
+          desc: 十大流通股东
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: stk_holdernumber
+          desc: 股东户数
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: stk_holdertrade
+          desc: 股东增减持
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: stk_managers
+          desc: 高管任职与薪酬
+          params: { ts_code: "601988.SH" }
+
+    # ===== Tier 3: 增强 (技术因子 + 港股 + 宏观对标) =====
+    - tier: 3
+      domain: technical_factors
+      desc: 技术因子 (量化研究输入)
+      schedule: daily
+      items:
+        - method: stk_factor
+          desc: 股票技术因子
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: stk_factor_pro
+          desc: 增强技术因子
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+          points_required: 5000
+        - method: cyq_chips
+          desc: 筹码分布
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+        - method: stk_weekly_monthly
+          desc: 周月线指标
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+
+    - tier: 3
+      domain: hk_supplementary
+      desc: H 股补充数据 (A/H 联动)
+      schedule: daily
+      items:
+        - method: hk_basic
+          params: { ts_code: "03988.HK" }
+        - method: hk_daily
+          desc: H 股日线
+          params_template: { ts_code: "03988.HK", start_date: "{start}", end_date: "{end}" }
+        - method: hk_daily_adj
+          desc: H 股复权日线
+          params_template: { ts_code: "03988.HK", start_date: "{start}", end_date: "{end}" }
+        - method: hk_adjfactor
+          params_template: { ts_code: "03988.HK", start_date: "{start}", end_date: "{end}" }
+        - method: hk_fina_indicator
+          desc: H 股财务指标
+          params_template: { ts_code: "03988.HK", start_date: "{start}", end_date: "{end}" }
+
+    - tier: 3
+      domain: macro_benchmark
+      desc: 宏观与对标 (银行股对利率敏感)
+      schedule: monthly
+      items:
+        - method: shibor
+          desc: 上海银行间同业拆放利率
+          params_template: { start_date: "{start}", end_date: "{end}" }
+        - method: shibor_lpr
+          desc: LPR 贷款市场报价利率 (银行净息差核心驱动)
+          params_template: { start_date: "{start}", end_date: "{end}" }
+        - method: cn_m
+          desc: 货币供应量 M0/M1/M2
+          params_template: { start_date: "{start}", end_date: "{end}" }
+        - method: index_daily
+          desc: "基准指数日线 (对标: 000001.SH/000300.SH/399986.SZ)"
+          params_template: { ts_code: "{bench_code}", start_date: "{start}", end_date: "{end}" }
+          pagination: by_year
+          row_limit: 8000            # 单次最多 8000 行，超限按年切片
+        - method: sw_daily
+          desc: 申万银行指数日线
+          params_template: { ts_code: "801780.SI", start_date: "{start}", end_date: "{end}" }
+
+    # ===== Tier 4: 可选 (事件 / 高频 / 另类) =====
+    - tier: 4
+      domain: events_optional
+      desc: 事件与另类数据 (按需)
+      schedule: on_demand
+      items:
+        - method: suspend_d
+          desc: 停复牌明细
+        - method: limit_list_d
+          desc: 涨跌停统计
+        - method: anns_d
+          desc: 公告数据
+        - method: stk_surv
+          desc: 投资者调研
+        - method: stk_mins
+          desc: 分钟线 (高频, 积分要求高)
+          params_template: { ts_code: "601988.SH", freq: "5min", start_date: "{start}", end_date: "{end}" }
+          points_required: 5000
+        - method: research_report
+          desc: 研报评级
+          params_template: { ts_code: "601988.SH", start_date: "{start}", end_date: "{end}" }
+
+  # ---------------------------------------------------------------------------
+  # 6. 存储约定
+  # ---------------------------------------------------------------------------
+  storage:
+    layering:
+      raw:        data/raw/        # 原始数据, 严格按 API 返回落盘, 只追加不改写
+      processed:  data/processed/  # 清洗/对齐/复权后的分析就绪数据
+      meta:       data/meta/       # 获取日志 / 校验报告 / 运行状态
+    file_format: parquet           # 时序首选; 小表/查阅可用 csv
+    partitioning:
+      timeseries: "{domain}/{ts_code}/{year}.parquet"
+      lowfreq:    "{domain}/{ts_code}.parquet"
+    naming:
+      snapshot:   "{ts_code}_{start}_{end}_{YYYYMMDD_HHmmss}.parquet"
+    schema_enforcement:
+      - trade_date 统一为 YYYYMMDD 字符串; 落库后转 date 类型
+      - ts_code 统一大写带交易所后缀 (601988.SH / 03988.HK)
+      - 数值字段空值统一为 NaN, 不用 0 填充
+    idempotency:
+      - 同一 (domain, ts_code, period) 重复获取时覆盖对应分片, 不产生重复行
+      - 每次写入附带 manifest (行数, 字段, 拉取时间, API 耗时)
+
+  # ---------------------------------------------------------------------------
+  # 7. 数据质量校验
+  # ---------------------------------------------------------------------------
+  quality_control:
+    completeness:
+      - 日线数据: 交易日数应等于 trade_cal 区间内交易日数 (±容差, 排除停牌)
+      - 检查 start_date~end_date 内每个交易日是否有 OHLCV 记录
+      - 财务数据: 每年至少 4 个报告期 (年报/半年报/一季报/三季报)
+    correctness:
+      - OHLC 关系: low ≤ open,close ≤ high; pre_close = 前一日 close
+      - 涨跌幅: "|pct_chg - (close/pre_close-1)*100| < 0.01"
+      - 复权一致性: adj_close = close * adj_factor / adj_factor[base]
+      - 量价非负 (vol >= 0, amount >= 0); 停牌日允许 0
+    timeliness:
+      - 日线数据更新延迟 ≤ T+1 日 (盘后)
+      - 财务数据更新延迟 ≤ 报告披露后 1 日
+    anomaly:
+      - 检测跳空缺口 > 9.5% (银行股涨跌停 ±10%) 并标记
+      - 检测成交量为 0 的非停牌日
+    output:
+      report: data/meta/quality_report_{YYYYMMDD}.json
+      on_fail: 记录缺陷清单, 不阻断后续流程, 但在报告中标红
+
+  # ---------------------------------------------------------------------------
+  # 8. 增量更新策略
+  # ---------------------------------------------------------------------------
+  update_strategy:
+    initial_load:
+      mode: backfill              # 首次全量回填, 按年分片串行拉取
+      resume: true                # 支持断点续跑 (记录已完成的分片)
+    incremental:
+      mode: append                # 增量追加
+      trigger: daily_after_close  # 每交易日 17:00 后
+      window: last_3_trading_days # 增量窗口取最近 3 个交易日 (覆盖补丁与延迟披露)
+      dedup_key: [ts_code, trade_date]   # 时序; 财务为 [ts_code, end_date, report_type]
+    scheduling:
+      daily_domains: [daily_quotes, capital_flow, technical_factors]
+      quarterly_domains: [financials, shareholders]
+      monthly_domains: [macro_benchmark]
+      on_demand_domains: [basic_info, events_optional]
+
+  # ---------------------------------------------------------------------------
+  # 9. API 限频与容错
+  # ---------------------------------------------------------------------------
+  api_handling:
+    rate_limit:
+      default_calls_per_minute: 200   # Tushare 普通接口默认; 高频接口更低
+      min_interval_ms: 320            # 调用最小间隔, 防触发频控
+      backoff: exponential            # 触发频控后指数退避 (1s→2s→4s, 上限 60s)
+    pagination:
+      strategy: by_date_or_year       # 按日期/年切片, 单次不超 row_limit
+      index_daily_limit: 8000         # 指数日线单次上限
+      hsgt_limit: 300                 # 沪深港通单次上限 300 条, 必须按日切片
+      general_limit: 5000             # 通用单次返回上限
+    retry:
+      max_attempts: 3
+      retry_on: [timeout, rate_limited, server_error]
+      no_retry_on: [invalid_params, permission_denied]  # 权限不足直接报错
+    error_policy:
+      log: data/meta/fetch_log_{YYYYMMDD}.jsonl
+      on_domain_fail: skip_and_continue   # 单域失败不阻断其他域
+      alert_on: [permission_denied, consecutive_failures >= 3]
+
+  # ---------------------------------------------------------------------------
+  # 10. 执行工作流 (任务步骤)
+  # ---------------------------------------------------------------------------
+  execution_workflow:
+    step_1_validate:
+      name: 需求确认与权限校验
+      actions:
+        - 确认标的 (601988.SH / 03988.HK) 与时间窗口
+        - 校验 TUSHARE_TOKEN 与 tushareMcp 连接状态
+        - 探测积分等级, 标记不可用接口 (降级到对应 tier 的下限)
+    step_2_calendar:
+      name: 交易日历预处理
+      actions:
+        - 调用 trade_cal 生成 start_date~end_date 交易日清单
+        - 按年切片, 产出 data/meta/trade_cal_5y.parquet
+    step_3_fetch_tier1:
+      name: 获取 Tier1 核心数据
+      actions: [stock_basic, daily, daily_basic, adj_factor, stk_limit]
+      parallel: true                 # 不同 domain 可并发
+    step_4_fetch_tier2:
+      name: 获取 Tier2 重要数据
+      actions: [moneyflow, margin_detail, hk_hold, income, balancesheet, cashflow, fina_indicator, dividend, top10_holders]
+      depends_on: step_3             # 复用 trade_cal 与基础信息
+    step_5_fetch_tier3:
+      name: 获取 Tier3 增强数据
+      actions: [stk_factor_pro, cyq_chips, hk_daily, shibor_lpr, index_daily, sw_daily]
+      depends_on: step_4
+    step_6_fetch_tier4:
+      name: 获取 Tier4 可选数据 (按需)
+      actions: [anns_d, stk_surv, stk_mins, research_report]
+      depends_on: step_5
+    step_7_validate:
+      name: 数据质量校验
+      actions: [完整性/正确性/时效性/异常检测 → 生成 quality_report]
+      depends_on: step_6
+    step_8_process:
+      name: 加工处理 (复权计算/字段对齐/A-H 合并)
+      actions: [生成 processed 层分析就绪数据]
+      depends_on: step_7
+    step_9_deliver:
+      name: 交付与文档
+      actions: [输出数据清单/字段字典/获取日志, 归档 manifest]
+      depends_on: step_8
+    step_10_automate:
+      name: 配置增量更新自动化
+      actions: [按 update_strategy.scheduling 建立每日/每季度定时任务]
+      depends_on: step_9
+
+  # ---------------------------------------------------------------------------
+  # 11. 合规与使用说明
+  # ---------------------------------------------------------------------------
+  compliance:
+    license: Tushare Pro 数据仅供本账户内部研究使用, 禁止再分发
+    attribution: 引用数据需注明来源 Tushare Pro
+    retention: 原始数据按积分协议使用, 不做商业化转售
+    sensitive: 不存储任何账户 token 明文于数据文件中

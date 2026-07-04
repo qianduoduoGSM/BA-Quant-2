@@ -1,0 +1,451 @@
+# ============================================================
+# 技术指标计算与可视化规范 (Technical Analysis Spec)
+# ============================================================
+spec:
+  meta:
+    version: "1.1"
+    created: "2026-07-04"
+    last_updated: "2026-07-04"
+    author: "AI-Quant 2"
+    changelog:
+      - "v1.0: 初始版本, 覆盖 5 大指标定义、可视化、QC、合规"
+      - "v1.1: 新增指标 CSV 导出规范 (csv_export), 工作流新增数据导出步骤, QC 新增 CSV 校验规则"
+    description: >
+      中国 A 股技术指标计算与可视化的标准化规范。
+      覆盖 RSI、MACD、布林带、ATR、KDJ 五大指标的定义、参数、计算公式、
+      信号判断规则、数据要求、输出格式（图表 + CSV）、质量校验与合规说明，
+      作为技术分析流程的单一事实来源。
+
+  objectives:
+    - 标准化技术指标的计算公式与默认参数，避免不同脚本间口径不一致
+    - 规范可视化的样式约定（A 股红涨绿跌、暗色主题、图表布局）
+    - 定义信号判断规则与阈值，支持自动化策略扫描
+    - 明确输入数据要求（复权方式、字段、频率），确保分析结果可比
+    - 定义指标数据 CSV 导出规范，确保计算结果可被回测、因子分析等下游流程复用
+    - 为后续多标的横向对比、因子挖掘、回测集成奠定基础
+
+  input_requirements:
+    data_source: "Tushare Pro daily + adj_factor，经复权处理后的 CSV"
+    required_fields:
+      - ts_code
+      - trade_date (YYYYMMDD)
+      - open
+      - high
+      - low
+      - close
+      - pre_close
+      - vol
+      - amount
+      - pct_chg
+      - change
+    adjustment_method: "前复权 (forward-adjusted)"
+    adjustment_rationale: >
+      技术分析需消除除权除息导致的价格跳空，使均线、轨道、形态识别连续有效。
+      前复权以最新日为锚，历史价格向下修正，适合趋势识别和跨日价格比较。
+      后复权适合收益率计算，但价格脱离现实成交价，不宜用于技术形态判断。
+    frequency: "日度 (daily bar)"
+    min_history: "250 个交易日 (约 1 年)，确保指标有足够预热期"
+    recommended_history: "500+ 个交易日"
+    encoding: "utf-8-sig"
+    sort_order: "按 trade_date 升序"
+
+  indicator_definitions:
+
+    # ── 1. RSI ──
+    - name: "RSI"
+      full_name: "相对强弱指标 (Relative Strength Index)"
+      category: "动量指标 (Momentum)"
+      purpose: "衡量价格变动的速度和幅度，判断超买超卖状态"
+      formula:
+        step_1: "delta = close.diff()"
+        step_2: "gain = max(delta, 0); loss = max(-delta, 0)"
+        step_3: "avg_gain = EMA(gain, alpha=1/period); avg_loss = EMA(loss, alpha=1/period)"
+        step_4: "RS = avg_gain / avg_loss"
+        step_5: "RSI = 100 - 100 / (1 + RS)"
+      smoothing_method: "Wilder 平滑法 (等价于 alpha=1/N 的 EMA)"
+      parameters:
+        - param: "period"
+          default: 14
+          variants: [6, 12, 14, 24]
+          description: "计算窗口; 6/12 为短期敏感型, 14 为标准, 24 为长期平滑型"
+      signals:
+        overbought: { condition: "RSI > 70", meaning: "超买, 可能回调" }
+        oversold: { condition: "RSI < 30", meaning: "超卖, 可能反弹" }
+        neutral: { condition: "RSI ≈ 50", meaning: "多空平衡" }
+        divergence_bull: { condition: "价格创新低但 RSI 未创新低", meaning: "底背离, 看涨" }
+        divergence_bear: { condition: "价格创新高但 RSI 未创新高", meaning: "顶背离, 看跌" }
+      output_fields: ["RSI_6", "RSI_14", "RSI_24"]
+      visualization:
+        - "RSI 折线图 (0-100 区间)"
+        - "70 红色虚线 (超买), 30 绿色虚线 (超卖), 50 灰色点线 (中性)"
+        - "超买区域红色半透明填充, 超卖区域绿色半透明填充"
+        - "配合收盘价上图, 双子图布局"
+
+    # ── 2. MACD ──
+    - name: "MACD"
+      full_name: "指数平滑移动平均线 (Moving Average Convergence Divergence)"
+      category: "趋势动量指标 (Trend + Momentum)"
+      purpose: "通过快慢均线之差判断趋势方向和动量强弱"
+      formula:
+        step_1: "EMA_fast = EMA(close, fast_period)"
+        step_2: "EMA_slow = EMA(close, slow_period)"
+        step_3: "DIF = EMA_fast - EMA_slow"
+        step_4: "DEA = EMA(DIF, signal_period)"
+        step_5: "MACD_hist = 2 * (DIF - DEA)"
+      smoothing_method: "指数移动平均 (EMA, adjust=False)"
+      parameters:
+        - param: "fast_period"
+          default: 12
+          description: "快线 EMA 周期"
+        - param: "slow_period"
+          default: 26
+          description: "慢线 EMA 周期"
+        - param: "signal_period"
+          default: 9
+          description: "信号线 EMA 周期"
+      signals:
+        golden_cross: { condition: "DIF 上穿 DEA", meaning: "金叉, 买入信号" }
+        death_cross: { condition: "DIF 下穿 DEA", meaning: "死叉, 卖出信号" }
+        bull_market: { condition: "DIF > 0 且 DEA > 0", meaning: "零轴上方, 多头市场" }
+        bear_market: { condition: "DIF < 0 且 DEA < 0", meaning: "零轴下方, 空头市场" }
+        hist_turn_positive: { condition: "柱状图由负转正", meaning: "动量转多" }
+        hist_turn_negative: { condition: "柱状图由正转负", meaning: "动量转空" }
+      output_fields: ["DIF", "DEA", "MACD_hist"]
+      visualization:
+        - "柱状图: 红(正)绿(负), 代表 MACD_hist"
+        - "DIF 黄色线, DEA 紫色线"
+        - "零轴灰色水平线"
+        - "金叉红色三角标记, 死叉绿色倒三角标记"
+        - "配合收盘价 + EMA12/EMA26 上图"
+
+    # ── 3. BOLL ──
+    - name: "BOLL"
+      full_name: "布林带 (Bollinger Bands)"
+      category: "波动率/通道指标 (Volatility / Channel)"
+      purpose: "用统计方法衡量价格波动的上下限，判断相对高低和波动率变化"
+      formula:
+        step_1: "MID = SMA(close, window)"
+        step_2: "sigma = STD(close, window)"
+        step_3: "UPPER = MID + num_std * sigma"
+        step_4: "LOWER = MID - num_std * sigma"
+        step_5: "WIDTH = (UPPER - LOWER) / MID"
+        step_6: "PCTB = (close - LOWER) / (UPPER - LOWER)"
+      smoothing_method: "简单移动平均 (SMA) + 滚动标准差"
+      parameters:
+        - param: "window"
+          default: 20
+          description: "计算窗口"
+        - param: "num_std"
+          default: 2
+          description: "标准差倍数"
+      signals:
+        overbought: { condition: "close > UPPER", meaning: "突破上轨, 超买或强势突破" }
+        oversold: { condition: "close < LOWER", meaning: "突破下轨, 超卖或强势跌破" }
+        squeeze: { condition: "WIDTH 降至历史低位", meaning: "带宽收窄, 酝酿大行情" }
+        expansion: { condition: "WIDTH 急剧上升", meaning: "带宽扩张, 趋势加速" }
+        pctb_high: { condition: "PCTB > 0.8", meaning: "接近上轨" }
+        pctb_low: { condition: "PCTB < 0.2", meaning: "接近下轨" }
+      output_fields: ["BOLL_MID", "BOLL_UPPER", "BOLL_LOWER", "BOLL_WIDTH", "BOLL_PCTB"]
+      visualization:
+        - "收盘价蓝色线 + 中轨黄色线 + 上轨红色线 + 下轨绿色线"
+        - "上下轨之间紫色半透明填充"
+        - "突破上轨红色倒三角标记, 突破下轨绿色三角标记"
+        - "下子图: 带宽比 (WIDTH) 橙色线 + 均值参考线"
+
+    # ── 4. ATR ──
+    - name: "ATR"
+      full_name: "真实波幅 (Average True Range)"
+      category: "波动率指标 (Volatility)"
+      purpose: "衡量价格波动的绝对幅度，常用于止损设置和仓位管理"
+      formula:
+        step_1: "TR = max(high - low, |high - pre_close|, |low - pre_close|)"
+        step_2: "ATR = EMA(TR, alpha=1/period) (Wilder 平滑法)"
+        step_3: "ATR_PCT = ATR / close * 100"
+      smoothing_method: "Wilder 平滑法 (等价于 alpha=1/N 的 EMA)"
+      parameters:
+        - param: "period"
+          default: 14
+          variants: [7, 14, 21]
+          description: "平滑窗口; 7 为短期敏感, 14 为标准, 21 为长期平滑"
+      signals:
+        high_volatility: { condition: "ATR > 历史均值 + 1σ", meaning: "波动加剧, 风险升高" }
+        low_volatility: { condition: "ATR < 历史均值 - 1σ", meaning: "波动收敛, 可能酝酿行情" }
+        atr_rising: { condition: "ATR 连续上升", meaning: "市场波动扩大" }
+        atr_falling: { condition: "ATR 连续下降", meaning: "市场趋于平静" }
+      applications:
+        dynamic_stop_loss: "止损价 = 入场价 - n * ATR (常用 n=2 或 n=3)"
+        position_sizing: "仓位 = 风险金额 / (n * ATR * 合约乘数)"
+        volatility_filter: "ATR_PCT > 5% 时降低仓位或暂停交易"
+      output_fields: ["TR", "ATR_14", "ATR_PCT"]
+      visualization:
+        - "TR 灰色柱状图 (单日波幅背景)"
+        - "ATR 红色线 (左轴, 价格)"
+        - "ATR_PCT 绿色线 (右轴, 百分比)"
+        - "ATR 峰值标注"
+
+    # ── 5. KDJ ──
+    - name: "KDJ"
+      full_name: "随机指标 (Stochastic Oscillator)"
+      category: "动量/超买超卖指标 (Momentum / Overbought-Oversold)"
+      purpose: "通过收盘价在近期价格区间中的位置判断超买超卖和短期转折"
+      formula:
+        step_1: "RSV = (close - low_n) / (high_n - low_n) * 100"
+        step_2: "K = (m1-1)/m1 * K_prev + 1/m1 * RSV"
+        step_3: "D = (m2-1)/m2 * D_prev + 1/m2 * K"
+        step_4: "J = 3*K - 2*D"
+      smoothing_method: "递推加权平滑 (等价于 EMA 的离散形式)"
+      parameters:
+        - param: "n"
+          default: 9
+          description: "RSV 计算窗口 (最近 n 日高低价)"
+        - param: "m1"
+          default: 3
+          description: "K 值平滑系数"
+        - param: "m2"
+          default: 3
+          description: "D 值平滑系数"
+      initialization: "K_prev = D_prev = 50 (中性初始值)"
+      signals:
+        golden_cross: { condition: "K 上穿 D", meaning: "金叉, 买入信号" }
+        death_cross: { condition: "K 下穿 D", meaning: "死叉, 卖出信号" }
+        overbought: { condition: "K > 80 或 D > 80", meaning: "超买" }
+        oversold: { condition: "K < 20 或 D < 20", meaning: "超卖" }
+        j_extreme_high: { condition: "J > 100", meaning: "极端超买, 反转概率高" }
+        j_extreme_low: { condition: "J < 0", meaning: "极端超卖, 反转概率高" }
+      output_fields: ["K", "D", "J"]
+      visualization:
+        - "K 黄色线, D 蓝色线, J 紫色线"
+        - "80 红色虚线 (超买), 20 绿色虚线 (超卖), 50 灰色点线 (中性)"
+        - "超买区域红色半透明填充, 超卖区域绿色半透明填充"
+        - "金叉红色三角标记, 死叉绿色倒三角标记"
+        - "Y 轴范围 -10 ~ 110"
+
+  visualization_conventions:
+    theme: "dark"
+    background_color: "#1e1e2e"
+    panel_color: "#1e1e2e"
+    grid_color: "#45475a"
+    text_color: "#cdd6f4"
+    figure_dpi: 120
+    save_dpi: 150
+    font: "SimHei / Microsoft YaHei / DejaVu Sans"
+    color_palette:
+      red: "#f38ba8"        # 涨 / 超买 / 买入信号
+      green: "#a6e3a1"      # 跌 / 超卖 / 卖出信号
+      blue: "#89b4fa"       # 收盘价主线
+      yellow: "#f9e2af"     # 快线 / 短周期线
+      orange: "#fab387"     # 波动率 / 辅助线
+      purple: "#cba6f7"     # 慢线 / 信号线
+      gray: "#6c7086"       # 参考线 / 边框
+    stock_market_convention: "A 股惯例: 红=涨, 绿=跌 (与美股相反)"
+    layout_rules:
+      single_indicator: "双子图: 上图收盘价(2/3高度), 下图指标(1/3高度), 共享 X 轴"
+      dashboard: "5 行 1 列 GridSpec, 价格+BOLL 在第 1 行(最大), 其余指标各占 1 行"
+      x_axis: "3 个月间隔刻度, YYYY-MM 格式, 30 度旋转"
+      figure_size: "单指标 14x7, 仪表盘 16x14"
+    annotation_rules:
+      golden_cross: "红色上三角 (^), size=40-60"
+      death_cross: "绿色倒三角 (v), size=40-60"
+      breakout: "小三角标记, size=30"
+      peak_annotation: "箭头 + 文字标注峰值数值和日期"
+
+  output_specification:
+    notebook:
+      format: "Jupyter Notebook (.ipynb)"
+      kernel: "python3"
+      cell_structure:
+        - "标题 Markdown cell"
+        - "数据加载与预处理 code cell"
+        - "每个指标: 1 个 Markdown cell (解释) + 1 个 code cell (计算+可视化)"
+        - "综合仪表盘 code cell"
+        - "信号汇总表 code cell"
+        - "指标数据导出 code cell (CSV 导出, 含字段清单和预览)"
+        - "重要说明 Markdown cell (数据复权说明 + 风险提示与免责声明)"
+      execution: "必须通过 nbconvert 全量执行无报错"
+    images:
+      format: "PNG"
+      naming: "{prefix}_{indicator}.png"
+      examples: ["boc_rsi.png", "boc_macd.png", "boc_boll.png", "boc_atr.png", "boc_kdj.png", "boc_dashboard.png"]
+      output_dir: "outputs/"
+    signal_table:
+      format: "stdout 文本表格"
+      columns: ["指标", "数值", "信号"]
+      last_row: "数据日期 + 收盘价"
+    csv_export:
+      format: "CSV (UTF-8 with BOM)"
+      naming: "{prefix}_technical_indicators.csv"
+      output_dir: "data/processed/"
+      field_groups:
+        base: ["trade_date", "date", "open", "high", "low", "close", "volume", "pct_chg", "change"]
+        rsi: ["RSI_6", "RSI_14", "RSI_24"]
+        macd: ["DIF", "DEA", "MACD_hist"]
+        boll: ["BOLL_MID", "BOLL_UPPER", "BOLL_LOWER", "BOLL_WIDTH", "BOLL_PCTB"]
+        atr: ["TR", "ATR_14", "ATR_PCT"]
+        kdj: ["K", "D", "J"]
+        signals: ["MACD_golden_cross", "MACD_death_cross", "KDJ_golden_cross", "KDJ_death_cross", "BOLL_break_up", "BOLL_break_down", "RSI_oversold", "RSI_overbought"]
+      signal_column_type: "int (0/1), 1 表示当日触发该信号"
+      includes_preview: true
+
+  quality_control:
+    validation_checks:
+      - id: "QC-01"
+        name: "指标无 NaN"
+        rule: "所有指标列在预热期后 (前 max_period 行之后) 不得有 NaN"
+        severity: "error"
+      - id: "QC-02"
+        name: "RSI 范围合法"
+        rule: "RSI 值必须在 [0, 100] 区间内"
+        severity: "error"
+      - id: "QC-03"
+        name: "BOLL 通道顺序"
+        rule: "LOWER <= MID <= UPPER 对所有行成立"
+        severity: "error"
+      - id: "QC-04"
+        name: "ATR 非负"
+        rule: "TR 和 ATR 不得为负值"
+        severity: "error"
+      - id: "QC-05"
+        name: "KDJ 初始化"
+        rule: "K[0] = D[0] = 50, J[0] = 50"
+        severity: "warning"
+      - id: "QC-06"
+        name: "金叉死叉配对"
+        rule: "金叉和死叉在序列中应交替出现, 连续同向信号需人工核查"
+        severity: "warning"
+      - id: "QC-07"
+        name: "前复权数据校验"
+        rule: "close.diff() 不应出现 >10% 的跳空 (除权日除外, 前复权后应无跳空)"
+        severity: "error"
+      - id: "QC-08"
+        name: "图表渲染完整性"
+        rule: "nbconvert 执行后所有 code cell 无 error 输出, PNG 文件大小 > 50KB"
+        severity: "error"
+      - id: "QC-09"
+        name: "CSV 导出完整性"
+        rule: "导出 CSV 行数 = 输入数据行数, 列数 >= 25 (含 7 组字段), 编码 utf-8-sig"
+        severity: "error"
+      - id: "QC-10"
+        name: "信号列值域"
+        rule: "所有 signal 列值仅允许 0 或 1, 不含 NaN"
+        severity: "error"
+      - id: "QC-11"
+        name: "CSV 字段对齐"
+        rule: "CSV 列名与 spec csv_export.field_groups 定义完全一致, 无多余/遗漏"
+        severity: "warning"
+
+  parameter_presets:
+    default:
+      RSI: { period: 14 }
+      MACD: { fast_period: 12, slow_period: 26, signal_period: 9 }
+      BOLL: { window: 20, num_std: 2 }
+      ATR: { period: 14 }
+      KDJ: { n: 9, m1: 3, m2: 3 }
+    short_term:
+      description: "短期敏感型, 适合日内或波段交易"
+      RSI: { period: 6 }
+      MACD: { fast_period: 5, slow_period: 13, signal_period: 4 }
+      BOLL: { window: 10, num_std: 2 }
+      ATR: { period: 7 }
+      KDJ: { n: 5, m1: 3, m2: 3 }
+    long_term:
+      description: "长期平滑型, 适合中长线趋势跟踪"
+      RSI: { period: 24 }
+      MACD: { fast_period: 19, slow_period: 39, signal_period: 9 }
+      BOLL: { window: 50, num_std: 2.5 }
+      ATR: { period: 21 }
+      KDJ: { n: 14, m1: 3, m2: 3 }
+
+  execution_workflow:
+    - step: 1
+      name: "数据准备"
+      action: "加载前复权 CSV, 解析日期, 排序, 确认字段完整性"
+      output: "DataFrame (sorted by date asc)"
+    - step: 2
+      name: "指标计算"
+      action: "按 default 预设参数计算 RSI/MACD/BOLL/ATR/KDJ"
+      output: "DataFrame 追加指标列"
+    - step: 3
+      name: "质量校验"
+      step_3: "执行 QC-01 ~ QC-11 校验, 记录通过/失败"
+      output: "validation_report"
+    - step: 4
+      name: "信号提取"
+      action: "计算金叉/死叉/突破/超买超卖事件, 生成信号列表"
+      output: "signal_events DataFrame"
+    - step: 5
+      name: "单指标可视化"
+      action: "逐个生成 RSI/MACD/BOLL/ATR/KDJ 双子图 (价格+指标)"
+      output: "5 张 PNG"
+    - step: 6
+      name: "综合仪表盘"
+      action: "5 行 GridSpec 布局, 一图展示全部指标"
+      output: "1 张 dashboard PNG"
+    - step: 7
+      name: "信号汇总"
+      action: "提取最新日各指标数值和信号, 输出文本表格"
+      output: "signal_summary (stdout)"
+    - step: 8
+      name: "指标数据导出"
+      action: "将 5 大指标列 + 8 个信号标记列写入 CSV (utf-8-sig), 含字段清单打印和前 3 行预览"
+      output: "{prefix}_technical_indicators.csv"
+    - step: 9
+      name: "Notebook 组装"
+      action: "按 cell_structure 组装 Jupyter notebook, nbconvert 全量执行"
+      output: "executed .ipynb"
+    - step: 10
+      name: "归档"
+      action: "notebook + PNG + CSV + 信号汇总存入对应目录, 更新 manifest"
+      output: "artifacts archived"
+
+  extensibility:
+    additional_indicators:
+      - "OBV (能量潮) — 量价关系, 累积成交量"
+      - "CCI (顺势指标) — 价格与均值的偏离程度"
+      - "WR (威廉指标) — 收盘价在近期区间的位置"
+      - "DMI (趋向指标) — 趋势方向和强度"
+      - "SAR (抛物线) — 动态止损反转点"
+    multi_asset_support:
+      - "spec 设计为标的无关, 输入任何 A 股前复权 CSV 即可复用"
+      - "多标的对比时建议归一化前复权价格 (close / close.iloc[0] * 100)"
+    backtest_integration:
+      - "信号事件可直接作为策略输入: golden_cross → buy, death_cross → sell"
+      - "ATR 用于动态止损和仓位管理"
+      - "BOLL WIDTH 用于波动率择时"
+      - "导出的 CSV 可直接作为回测引擎输入, signal 列用于触发交易逻辑"
+
+  compliance:
+    data_adjustment_note:
+      title: "关于数据复权的重要说明"
+      content:
+        - "本分析使用的是**前复权 (forward-adjusted)** 价格数据, 非原始成交价。"
+        - "前复权以最新交易日为锚点, 历史价格按复权因子向下修正, 消除了分红送股导致的价格跳空。"
+        - "选择前复权的原因: 技术分析依赖连续的价格序列, 除权跳空会扭曲均线、轨道和形态识别。"
+        - "前复权数据适合: 趋势识别、K 线形态、均线策略、技术指标计算。"
+        - "前复权数据不适合: 查询历史真实成交价、与行情软件实时报价对照。"
+        - "如需计算真实收益率, 建议使用后复权数据或直接使用原始数据中的 pct_chg 字段。"
+        - "原始 pct_chg 字段已由交易所考虑除权后计算, 可直接用于收益率分析, 无需额外复权。"
+      adjustment_factor_range:
+        boc: "2.026 (2021-07-05) → 2.584 (2026-07-03), 变化 +0.558"
+        moutai: "7.474 (2021-07-05) → 8.646 (2026-07-03), 变化 +1.172"
+      note: "复权因子从上市日开始累计, 非从分析起点开始; 因子越大说明历史累计分红越多。"
+    investment_disclaimer:
+      title: "风险提示与免责声明"
+      content:
+        - "**本 notebook 及其输出结果仅供学术研究和学习交流, 不构成任何投资建议。**"
+        - "技术指标仅基于历史价格数据的统计计算, 不包含公司基本面、宏观经济、政策面等信息。"
+        - "所有信号 (金叉、死叉、超买、超卖等) 均为基于历史数据的统计概率, 不代表未来必然发生。"
+        - "历史表现不代表未来收益; 过去的规律可能在市场环境变化后失效。"
+        - "技术指标存在滞后性, 信号发出时价格可能已有较大变动 (尤其是趋势型指标如 MACD)。"
+        - "单一指标存在虚假信号, 实际交易中应结合多个指标、基本面分析及风险管理综合判断。"
+        - "中国 A 股市场具有 T+1 交易、涨跌停限制等特殊规则, 回测中需考虑流动性冲击和交易成本。"
+        - "使用者应自行承担依据本分析结果进行投资的全部风险和后果。"
+      risk_factors:
+        - "技术指标滞后风险: 信号发出时最优入场点可能已过"
+        - "虚假信号风险: 震荡市中金叉死叉频繁, 胜率下降"
+        - "黑天鹅事件风险: 突发事件导致技术分析完全失效"
+        - "过拟合风险: 参数优化可能在历史数据上表现优异但未来失效"
+        - "流动性风险: 大额交易可能无法以信号价格成交"
+    data_source: "Tushare Pro (https://tushare.pro)"
+    license: "仅供个人研究使用, 不得商用"
+    required_in_notebook: true
+    required_location: "notebook 末尾, 指标数据导出之后"

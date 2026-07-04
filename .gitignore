@@ -1,0 +1,32 @@
+# WorkBuddy internal
+.workbuddy/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Large data files (uncomment if you don't want to track raw data)
+# data/raw/*.csv
+# data/processed/*.csv
