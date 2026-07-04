@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantIndicators — A股技术指标交互分析工具</title>
+<style>
+:root {
+  --bg: #1a1b26;
+  --panel: #24283b;
+  --panel-hover: #2f354d;
+  --border: #3b4261;
+  --text: #c0caf5;
+  --text-dim: #565f89;
+  --red: #f7768e;
+  --green: #9ece6a;
+  --yellow: #e0af68;
+  --purple: #bb9af7;
+  --blue: #7aa2f7;
+  --cyan: #7dcfff;
+  --orange: #ff9e64;
+  --radius: 8px;
+  --sidebar-w: 280px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.logo {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.logo span { color: var(--text); font-weight: 400; font-size: 12px; margin-left: 6px; }
+
+.select-wrap { position: relative; }
+select {
+  appearance: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 32px 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+select:hover { border-color: var(--blue); }
+.select-wrap::after {
+  content: '\25BE';
+  position: absolute; right: 10px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-dim); pointer-events: none; font-size: 11px;
+}
+
+.header-info {
+  color: var(--text-dim); font-size: 12px;
+  display: flex; align-items: center; gap: 6px;
+}
+.header-info .price { color: var(--red); font-weight: 600; }
+.header-info .pct { color: var(--red); }
+
+.header-spacer { flex: 1; }
+
+/* Time range buttons */
+.time-range-group {
+  display: flex; gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px;
+}
+.tr-btn {
+  padding: 4px 10px; border: none;
+  background: transparent; color: var(--text-dim);
+  font-size: 11px; border-radius: 4px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+}
+.tr-btn:hover { color: var(--text); }
+.tr-btn.active { background: var(--purple); color: #fff; }
+
+.view-info {
+  font-size: 11px; color: var(--text-dim);
+  white-space: nowrap;
+}
+.view-info strong { color: var(--blue); }
+
+.preset-group {
+  display: flex; gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px;
+}
+.preset-btn {
+  padding: 4px 10px; border: none;
+  background: transparent; color: var(--text-dim);
+  font-size: 11px; border-radius: 4px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+}
+.preset-btn:hover { color: var(--text); }
+.preset-btn.active { background: var(--blue); color: #fff; }
+
+.btn {
+  padding: 6px 14px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+  border-radius: 6px; font-size: 12px; cursor: pointer;
+  font-family: inherit; display: flex; align-items: center;
+  gap: 4px; transition: all 0.15s;
+}
+.btn:hover { border-color: var(--blue); color: var(--blue); }
+.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-primary:hover { opacity: 0.9; color: #fff; }
+
+/* ── Layout ── */
+.layout { display: flex; height: calc(100vh - 52px); }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto; padding: 12px; flex-shrink: 0;
+}
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.indicator-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px; margin-bottom: 10px;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+.indicator-card.off { opacity: 0.35; }
+.indicator-card:hover { border-color: var(--text-dim); }
+
+.card-header {
+  display: flex; align-items: center;
+  justify-content: space-between; margin-bottom: 4px;
+}
+.card-title { display: flex; align-items: center; gap: 6px; }
+.color-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.card-name { font-weight: 600; font-size: 13px; }
+.card-sub { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; }
+
+.toggle {
+  position: relative; width: 32px; height: 18px;
+  background: var(--border); border-radius: 9px;
+  cursor: pointer; transition: background 0.2s; flex-shrink: 0;
+}
+.toggle.on { background: var(--green); }
+.toggle::after {
+  content: ''; position: absolute; width: 14px; height: 14px;
+  background: #fff; border-radius: 50%; top: 2px; left: 2px;
+  transition: transform 0.2s;
+}
+.toggle.on::after { transform: translateX(14px); }
+
+.param-row {
+  display: flex; align-items: center;
+  justify-content: space-between; margin-top: 8px;
+}
+.param-label { font-size: 11px; color: var(--text-dim); }
+.param-value {
+  font-size: 12px; font-weight: 600; color: var(--yellow);
+  min-width: 24px; text-align: right;
+}
+
+input[type="range"] {
+  width: 100%; height: 4px; -webkit-appearance: none;
+  background: var(--border); border-radius: 2px;
+  outline: none; margin-top: 4px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px;
+  background: var(--blue); border-radius: 50%;
+  cursor: pointer; transition: transform 0.1s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+input[type="range"]:disabled { opacity: 0.3; }
+input[type="range"]:disabled::-webkit-slider-thumb { background: var(--text-dim); }
+
+.preset-values { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.preset-val {
+  padding: 2px 6px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 10px; color: var(--text-dim); cursor: pointer;
+  transition: all 0.1s;
+}
+.preset-val:hover { color: var(--text); border-color: var(--text-dim); }
+.preset-val.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* ── Main Content ── */
+.content {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.content::-webkit-scrollbar { width: 6px; }
+.content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.chart-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.chart-title-row {
+  display: flex; align-items: center;
+  justify-content: space-between; margin-bottom: 8px;
+}
+.chart-title {
+  font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.chart-legend {
+  display: flex; gap: 12px;
+  font-size: 10px; color: var(--text-dim);
+}
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-line { width: 14px; height: 2px; border-radius: 1px; }
+.legend-dash { width: 14px; height: 0; border-top: 2px dashed; }
+.legend-box { width: 10px; height: 10px; border-radius: 2px; }
+
+/* Zoom controls */
+.chart-controls { display: flex; gap: 4px; align-items: center; }
+.zoom-btn {
+  width: 22px; height: 22px;
+  border: 1px solid var(--border);
+  background: var(--bg); color: var(--text-dim);
+  border-radius: 4px; cursor: pointer;
+  font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; font-family: inherit;
+  line-height: 1; padding: 0;
+}
+.zoom-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+canvas { display: block; width: 100%; cursor: crosshair; }
+
+/* Navigator */
+.navigator-wrap {
+  margin-top: 4px;
+  position: relative;
+}
+.navigator-wrap canvas { cursor: grab; height: 40px; }
+.navigator-wrap canvas:active { cursor: grabbing; }
+.nav-hint {
+  position: absolute; top: 2px; right: 4px;
+  font-size: 9px; color: var(--text-dim);
+  pointer-events: none;
+}
+
+.chart-row-2 { display: flex; gap: 12px; }
+.chart-row-2 .chart-card { flex: 1; }
+
+/* ── Signal Table ── */
+.signal-table {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.signal-table table { width: 100%; border-collapse: collapse; }
+.signal-table th {
+  background: var(--bg); padding: 8px 12px;
+  text-align: left; font-size: 11px; font-weight: 600;
+  color: var(--text-dim); border-bottom: 1px solid var(--border);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.signal-table td {
+  padding: 8px 12px; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.signal-table tr:last-child td { border-bottom: none; }
+.signal-table .ind-name { font-weight: 600; }
+.signal-badge {
+  display: inline-block; padding: 2px 8px;
+  border-radius: 4px; font-size: 11px; font-weight: 600;
+}
+.badge-red { background: rgba(247,118,142,0.15); color: var(--red); }
+.badge-green { background: rgba(158,206,106,0.15); color: var(--green); }
+.badge-yellow { background: rgba(224,175,104,0.15); color: var(--yellow); }
+.badge-dim { background: rgba(86,95,137,0.15); color: var(--text-dim); }
+
+.table-footer {
+  padding: 8px 12px; font-size: 11px; color: var(--text-dim);
+  display: flex; gap: 16px;
+}
+.table-footer .price { color: var(--red); font-weight: 600; }
+
+/* ── Disclaimer ── */
+.disclaimer {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px; font-size: 11px;
+  color: var(--text-dim); line-height: 1.6;
+}
+.disclaimer strong { color: var(--yellow); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="logo">QuantIndicators<span>A股技术指标交互分析</span></div>
+
+  <div class="select-wrap">
+    <select id="stockSelect">
+      <option value="boc">中国银行 601988.SH</option>
+      <option value="moutai">贵州茅台 600519.SH</option>
+      <option value="upload">+ 上传 CSV...</option>
+    </select>
+  </div>
+
+  <div class="header-info">
+    <span>2021-07-05 ~ 2026-07-03</span>
+    <span>|</span>
+    <span>1,211 交易日</span>
+    <span>|</span>
+    <span>收盘:</span>
+    <span class="price" id="hdrPrice">¥5.56</span>
+    <span class="pct" id="hdrPct">+0.54%</span>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div class="time-range-group" id="timeRangeGroup">
+    <button class="tr-btn" data-range="30">1月</button>
+    <button class="tr-btn" data-range="60">2月</button>
+    <button class="tr-btn" data-range="90">3月</button>
+    <button class="tr-btn" data-range="180">半年</button>
+    <button class="tr-btn active" data-range="365">1年</button>
+    <button class="tr-btn" data-range="0">全部</button>
+  </div>
+
+  <div class="view-info" id="viewInfo">--</div>
+
+  <div class="preset-group">
+    <button class="preset-btn active" data-preset="default">标准</button>
+    <button class="preset-btn" data-preset="short_term">短期</button>
+    <button class="preset-btn" data-preset="long_term">长期</button>
+  </div>
+
+  <button class="btn" onclick="alert('导出当前指标数据为 CSV')">导出CSV</button>
+</div>
+
+<!-- ── Layout ── -->
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar" id="sidebar">
+    <!-- RSI -->
+    <div class="indicator-card" data-indicator="rsi">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="color-dot" style="background:var(--purple)"></div>
+          <span class="card-name">RSI</span>
+        </div>
+        <div class="toggle on" onclick="toggleIndicator(this)"></div>
+      </div>
+      <div class="card-sub">相对强弱指标 · 动量</div>
+      <div class="param-row"><span class="param-label">period</span><span class="param-value" id="rsi-period-val">14</span></div>
+      <input type="range" min="2" max="50" value="14" step="1" id="rsi-period" oninput="onParamChange('rsi','period',this.value)">
+      <div class="preset-values">
+        <span class="preset-val" onclick="setParam('rsi','period',6)">6</span>
+        <span class="preset-val" onclick="setParam('rsi','period',12)">12</span>
+        <span class="preset-val active" onclick="setParam('rsi','period',14)">14</span>
+        <span class="preset-val" onclick="setParam('rsi','period',24)">24</span>
+      </div>
+    </div>
+
+    <!-- MACD -->
+    <div class="indicator-card" data-indicator="macd">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="color-dot" style="background:var(--yellow)"></div>
+          <span class="card-name">MACD</span>
+        </div>
+        <div class="toggle on" onclick="toggleIndicator(this)"></div>
+      </div>
+      <div class="card-sub">指数平滑移动平均线 · 趋势+动量</div>
+      <div class="param-row"><span class="param-label">fast</span><span class="param-value" id="macd-fast-val">12</span></div>
+      <input type="range" min="2" max="20" value="12" step="1" id="macd-fast" oninput="onParamChange('macd','fast',this.value)">
+      <div class="param-row"><span class="param-label">slow</span><span class="param-value" id="macd-slow-val">26</span></div>
+      <input type="range" min="10" max="40" value="26" step="1" id="macd-slow" oninput="onParamChange('macd','slow',this.value)">
+      <div class="param-row"><span class="param-label">signal</span><span class="param-value" id="macd-signal-val">9</span></div>
+      <input type="range" min="2" max="20" value="9" step="1" id="macd-signal" oninput="onParamChange('macd','signal',this.value)">
+      <div class="preset-values">
+        <span class="preset-val active" onclick="setMACD(12,26,9)">12/26/9</span>
+        <span class="preset-val" onclick="setMACD(5,13,4)">5/13/4</span>
+        <span class="preset-val" onclick="setMACD(19,39,9)">19/39/9</span>
+      </div>
+    </div>
+
+    <!-- BOLL -->
+    <div class="indicator-card" data-indicator="boll">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="color-dot" style="background:var(--blue)"></div>
+          <span class="card-name">BOLL</span>
+        </div>
+        <div class="toggle on" onclick="toggleIndicator(this)"></div>
+      </div>
+      <div class="card-sub">布林带 · 波动率通道</div>
+      <div class="param-row"><span class="param-label">window</span><span class="param-value" id="boll-window-val">20</span></div>
+      <input type="range" min="5" max="60" value="20" step="1" id="boll-window" oninput="onParamChange('boll','window',this.value)">
+      <div class="param-row"><span class="param-label">num_std</span><span class="param-value" id="boll-std-val">2.0</span></div>
+      <input type="range" min="1.0" max="3.5" value="2.0" step="0.1" id="boll-std" oninput="onParamChange('boll','std',this.value)">
+      <div class="preset-values">
+        <span class="preset-val active" onclick="setBOLL(20,2.0)">20/2.0</span>
+        <span class="preset-val" onclick="setBOLL(10,1.5)">10/1.5</span>
+        <span class="preset-val" onclick="setBOLL(30,2.5)">30/2.5</span>
+      </div>
+    </div>
+
+    <!-- ATR -->
+    <div class="indicator-card" data-indicator="atr">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="color-dot" style="background:var(--orange)"></div>
+          <span class="card-name">ATR</span>
+        </div>
+        <div class="toggle on" onclick="toggleIndicator(this)"></div>
+      </div>
+      <div class="card-sub">真实波幅 · 波动率</div>
+      <div class="param-row"><span class="param-label">period</span><span class="param-value" id="atr-period-val">14</span></div>
+      <input type="range" min="5" max="30" value="14" step="1" id="atr-period" oninput="onParamChange('atr','period',this.value)">
+      <div class="preset-values">
+        <span class="preset-val" onclick="setParam('atr','period',7)">7</span>
+        <span class="preset-val active" onclick="setParam('atr','period',14)">14</span>
+        <span class="preset-val" onclick="setParam('atr','period',21)">21</span>
+      </div>
+    </div>
+
+    <!-- KDJ -->
+    <div class="indicator-card" data-indicator="kdj">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="color-dot" style="background:var(--cyan)"></div>
+          <span class="card-name">KDJ</span>
+        </div>
+        <div class="toggle on" onclick="toggleIndicator(this)"></div>
+      </div>
+      <div class="card-sub">随机指标 · 超买超卖</div>
+      <div class="param-row"><span class="param-label">n</span><span class="param-value" id="kdj-n-val">9</span></div>
+      <input type="range" min="5" max="30" value="9" step="1" id="kdj-n" oninput="onParamChange('kdj','n',this.value)">
+      <div class="param-row"><span class="param-label">m1</span><span class="param-value" id="kdj-m1-val">3</span></div>
+      <input type="range" min="2" max="10" value="3" step="1" id="kdj-m1" oninput="onParamChange('kdj','m1',this.value)">
+      <div class="param-row"><span class="param-label">m2</span><span class="param-value" id="kdj-m2-val">3</span></div>
+      <input type="range" min="2" max="10" value="3" step="1" id="kdj-m2" oninput="onParamChange('kdj','m2',this.value)">
+      <div class="preset-values">
+        <span class="preset-val active" onclick="setKDJ(9,3,3)">9/3/3</span>
+        <span class="preset-val" onclick="setKDJ(5,2,2)">5/2/2</span>
+        <span class="preset-val" onclick="setKDJ(14,3,3)">14/3/3</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Main Content ── -->
+  <div class="content">
+
+    <!-- Price + BOLL Main Chart -->
+    <div class="chart-card" id="chart-price">
+      <div class="chart-title-row">
+        <div class="chart-title">
+          <div class="color-dot" style="background:var(--blue)"></div>
+          价格走势 + 布林带 (前复权)
+        </div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-line" style="background:var(--blue)"></div>收盘价</div>
+          <div class="legend-item"><div class="legend-dash" style="border-color:var(--red)"></div>上轨</div>
+          <div class="legend-item"><div class="legend-line" style="background:var(--text-dim)"></div>中轨</div>
+          <div class="legend-item"><div class="legend-dash" style="border-color:var(--green)"></div>下轨</div>
+          <div class="legend-item"><div class="legend-box" style="background:rgba(122,162,247,0.08)"></div>通道区域</div>
+          <div class="chart-controls">
+            <button class="zoom-btn" onclick="zoomCentered(0.7)" title="放大">+</button>
+            <button class="zoom-btn" onclick="zoomCentered(1.4)" title="缩小">&minus;</button>
+            <button class="zoom-btn" onclick="resetZoom()" title="重置">&#x21ba;</button>
+          </div>
+        </div>
+      </div>
+      <canvas id="canvasPrice" height="280"></canvas>
+      <div class="navigator-wrap">
+        <canvas id="canvasNav" height="40"></canvas>
+        <span class="nav-hint">拖拽导航条平移 · 拖拽边缘缩放</span>
+      </div>
+    </div>
+
+    <!-- RSI Chart -->
+    <div class="chart-card" id="chart-rsi">
+      <div class="chart-title-row">
+        <div class="chart-title">
+          <div class="color-dot" style="background:var(--purple)"></div>
+          RSI <span style="color:var(--text-dim);font-weight:400">(<span id="rsi-period-label">14</span>)</span>
+        </div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-line" style="background:var(--purple)"></div>RSI</div>
+          <div class="legend-item"><div class="legend-dash" style="border-color:var(--red)"></div>70 超买</div>
+          <div class="legend-item"><div class="legend-dash" style="border-color:var(--green)"></div>30 超卖</div>
+          <div class="legend-item"><div class="legend-dash" style="border-color:var(--text-dim)"></div>50 中性</div>
+          <div class="chart-controls">
+            <button class="zoom-btn" onclick="zoomCentered(0.7)">+</button>
+            <button class="zoom-btn" onclick="zoomCentered(1.4)">&minus;</button>
+            <button class="zoom-btn" onclick="resetZoom()">&#x21ba;</button>
+          </div>
+        </div>
+      </div>
+      <canvas id="canvasRSI" height="150"></canvas>
+    </div>
+
+    <!-- MACD Chart -->
+    <div class="chart-card" id="chart-macd">
+      <div class="chart-title-row">
+        <div class="chart-title">
+          <div class="color-dot" style="background:var(--yellow)"></div>
+          MACD <span style="color:var(--text-dim);font-weight:400">(<span id="macd-params-label">12,26,9</span>)</span>
+        </div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-line" style="background:var(--yellow)"></div>DIF</div>
+          <div class="legend-item"><div class="legend-line" style="background:var(--purple)"></div>DEA</div>
+          <div class="legend-item"><div class="legend-box" style="background:var(--red)"></div>红柱</div>
+          <div class="legend-item"><div class="legend-box" style="background:var(--green)"></div>绿柱</div>
+          <div class="chart-controls">
+            <button class="zoom-btn" onclick="zoomCentered(0.7)">+</button>
+            <button class="zoom-btn" onclick="zoomCentered(1.4)">&minus;</button>
+            <button class="zoom-btn" onclick="resetZoom()">&#x21ba;</button>
+          </div>
+        </div>
+      </div>
+      <canvas id="canvasMACD" height="150"></canvas>
+    </div>
+
+    <!-- ATR + KDJ side by side -->
+    <div class="chart-row-2">
+      <div class="chart-card" id="chart-atr">
+        <div class="chart-title-row">
+          <div class="chart-title">
+            <div class="color-dot" style="background:var(--orange)"></div>
+            ATR <span style="color:var(--text-dim);font-weight:400">(<span id="atr-period-label">14</span>)</span>
+          </div>
+          <div class="chart-controls">
+            <button class="zoom-btn" onclick="zoomCentered(0.7)">+</button>
+            <button class="zoom-btn" onclick="zoomCentered(1.4)">&minus;</button>
+            <button class="zoom-btn" onclick="resetZoom()">&#x21ba;</button>
+          </div>
+        </div>
+        <canvas id="canvasATR" height="150"></canvas>
+      </div>
+
+      <div class="chart-card" id="chart-kdj">
+        <div class="chart-title-row">
+          <div class="chart-title">
+            <div class="color-dot" style="background:var(--cyan)"></div>
+            KDJ <span style="color:var(--text-dim);font-weight:400">(<span id="kdj-params-label">9,3,3</span>)</span>
+          </div>
+          <div class="chart-controls">
+            <button class="zoom-btn" onclick="zoomCentered(0.7)">+</button>
+            <button class="zoom-btn" onclick="zoomCentered(1.4)">&minus;</button>
+            <button class="zoom-btn" onclick="resetZoom()">&#x21ba;</button>
+          </div>
+        </div>
+        <canvas id="canvasKDJ" height="150"></canvas>
+      </div>
+    </div>
+
+    <!-- Signal Summary Table -->
+    <div class="signal-table">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:100px">指标</th>
+            <th style="width:120px">当前值</th>
+            <th style="width:120px">信号</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody id="signalBody">
+          <tr>
+            <td class="ind-name"><span style="color:var(--purple)">●</span> RSI(14)</td>
+            <td>36.4</td>
+            <td><span class="signal-badge badge-yellow">中性偏弱</span></td>
+            <td>接近超卖区域 (30)，需关注反弹信号</td>
+          </tr>
+          <tr>
+            <td class="ind-name"><span style="color:var(--yellow)">●</span> MACD(12,26,9)</td>
+            <td>DIF &lt; DEA</td>
+            <td><span class="signal-badge badge-green">空头</span></td>
+            <td>DIF 与 DEA 均在零轴下方，动量偏空</td>
+          </tr>
+          <tr>
+            <td class="ind-name"><span style="color:var(--blue)">●</span> BOLL(20,2)</td>
+            <td>%B = 0.07</td>
+            <td><span class="signal-badge badge-green">接近下轨</span></td>
+            <td>价格触及布林下轨，可能超卖</td>
+          </tr>
+          <tr>
+            <td class="ind-name"><span style="color:var(--orange)">●</span> ATR(14)</td>
+            <td>0.164 (2.96%)</td>
+            <td><span class="signal-badge badge-dim">正常</span></td>
+            <td>波动率处于正常区间</td>
+          </tr>
+          <tr>
+            <td class="ind-name"><span style="color:var(--cyan)">●</span> KDJ(9,3,3)</td>
+            <td>K=13.6 D=21.3</td>
+            <td><span class="signal-badge badge-green">超卖</span></td>
+            <td>K 值低于 20，J 值极端，关注金叉</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="table-footer">
+        <span>最新数据日期: <strong style="color:var(--text)">2026-07-03</strong></span>
+        <span>收盘价: <strong class="price">¥5.56</strong></span>
+        <span>涨跌幅: <strong style="color:var(--red)">+0.54%</strong></span>
+        <span style="margin-left:auto;color:var(--text-dim)">数据来源: Tushare Pro · 前复权</span>
+      </div>
+    </div>
+
+    <!-- Disclaimer -->
+    <div class="disclaimer">
+      <strong>⚠ 重要说明</strong> · 本工具使用<strong>前复权</strong>数据计算技术指标（消除除权除息导致的价格跳空）。
+      技术指标仅基于历史价格统计，不包含基本面信息，所有信号均为统计概率，<strong>不构成投资建议</strong>。
+      历史表现不代表未来收益，实际交易需结合风险管理。A 股红涨绿跌。
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════
+// Demo Data Generation
+// ════════════════════════════════════════
+const N = 1200; // 近5年交易日数量
+
+function genDates(n) {
+  const dates = [];
+  const d = new Date('2021-07-05T00:00:00');
+  while (dates.length < n) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      dates.push(y + m + dd);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+function genData(seed, basePrice, volatility) {
+  const data = [];
+  let price = basePrice;
+  let r = seed;
+  function rand() { r = (r * 1103515245 + 12345) & 0x7fffffff; return r / 0x7fffffff; }
+  for (let i = 0; i < N; i++) {
+    const trend = Math.sin(i / 50) * volatility * 0.5 + Math.sin(i / 120) * volatility * 0.3;
+    const noise = (rand() - 0.5) * volatility;
+    price = Math.max(0.5, price + trend + noise);
+    const open = price + (rand() - 0.5) * volatility * 0.5;
+    const high = Math.max(price, open) + rand() * volatility * 0.4;
+    const low = Math.min(price, open) - rand() * volatility * 0.4;
+    const vol = 500000 + rand() * 1000000;
+    const pct = i > 0 ? ((price - data[i-1].close) / data[i-1].close * 100) : 0;
+    data.push({ date: i, open, high, low, close: price, vol, pct });
+  }
+  return data;
+}
+
+const dateStrings = genDates(N);
+const stockData = {
+  boc: genData(42, 3.0, 0.05),
+  moutai: genData(88, 1800, 30)
+};
+let currentData = stockData.boc;
+
+// ════════════════════════════════════════
+// View Range State (Zoom / Pan)
+// ════════════════════════════════════════
+const MIN_VIS = 20; // 最小可见数据点
+let viewRange = { start: 0, end: N };
+
+function visSlice(arr) { return arr.slice(viewRange.start, viewRange.end); }
+function visLen() { return viewRange.end - viewRange.start; }
+function totalLen() { return currentData.length; }
+
+function clampViewRange() {
+  const total = totalLen();
+  let len = viewRange.end - viewRange.start;
+  if (len < MIN_VIS) len = MIN_VIS;
+  if (len > total) len = total;
+  viewRange.start = Math.max(0, Math.min(total - len, viewRange.start));
+  viewRange.end = Math.min(total, viewRange.start + len);
+}
+
+function zoomAtPosition(ratio, factor) {
+  const total = totalLen();
+  const range = viewRange.end - viewRange.start;
+  let newRange = Math.round(range * factor);
+  newRange = Math.max(MIN_VIS, Math.min(total, newRange));
+  const center = viewRange.start + ratio * range;
+  viewRange.start = Math.max(0, Math.round(center - ratio * newRange));
+  viewRange.end = Math.min(total, viewRange.start + newRange);
+  if (viewRange.end - viewRange.start < newRange) viewRange.start = viewRange.end - newRange;
+  clampViewRange();
+  syncTimeRangeButtons();
+  renderAll();
+}
+
+function zoomCentered(factor) {
+  const ratio = 0.5;
+  zoomAtPosition(ratio, factor);
+}
+
+function resetZoom() {
+  viewRange = { start: 0, end: totalLen() };
+  syncTimeRangeButtons();
+  renderAll();
+}
+
+function setTimeRange(days) {
+  const total = totalLen();
+  if (days === 0 || days >= total) {
+    viewRange.start = 0;
+    viewRange.end = total;
+  } else {
+    viewRange.end = total;
+    viewRange.start = Math.max(0, total - days);
+  }
+  clampViewRange();
+  syncTimeRangeButtons();
+  renderAll();
+}
+
+function syncTimeRangeButtons() {
+  const len = visLen();
+  const total = totalLen();
+  document.querySelectorAll('.tr-btn').forEach(btn => {
+    const r = parseInt(btn.dataset.range);
+    if (r === 0 && len === total) btn.classList.add('active');
+    else if (r !== 0 && Math.abs(len - r) < r * 0.15) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+}
+
+function fmtDate(s) {
+  if (!s) return '--';
+  return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6);
+}
+
+function updateViewInfo() {
+  const sd = dateStrings[viewRange.start] || '--';
+  const ed = dateStrings[Math.min(viewRange.end - 1, totalLen() - 1)] || '--';
+  document.getElementById('viewInfo').innerHTML =
+    '<strong>' + fmtDate(sd) + '</strong> ~ <strong>' + fmtDate(ed) + '</strong> (' + visLen() + ' 日)';
+}
+
+// ════════════════════════════════════════
+// Indicator Calculations (unchanged)
+// ════════════════════════════════════════
+function ema(values, period) {
+  const k = 2 / (period + 1);
+  const result = [];
+  let prev = values[0];
+  for (let i = 0; i < values.length; i++) {
+    prev = i === 0 ? values[0] : values[i] * k + prev * (1 - k);
+    result.push(prev);
+  }
+  return result;
+}
+
+function sma(values, period) {
+  const result = [];
+  for (let i = 0; i < values.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += values[i - j];
+    result.push(sum / period);
+  }
+  return result;
+}
+
+function calcRSI(closes, period) {
+  const gains = [], losses = [];
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i-1];
+    gains.push(Math.max(d, 0));
+    losses.push(Math.max(-d, 0));
+  }
+  const avgGains = ema(gains, period);
+  const avgLosses = ema(losses, period);
+  const rsi = [50];
+  for (let i = 0; i < gains.length; i++) {
+    const rs = avgLosses[i] === 0 ? 100 : avgGains[i] / avgLosses[i];
+    rsi.push(100 - 100 / (1 + rs));
+  }
+  return rsi;
+}
+
+function calcMACD(closes, fast, slow, signal) {
+  const emaFast = ema(closes, fast);
+  const emaSlow = ema(closes, slow);
+  const dif = closes.map((_, i) => emaFast[i] - emaSlow[i]);
+  const dea = ema(dif, signal);
+  const hist = dif.map((d, i) => 2 * (d - dea[i]));
+  return { dif, dea, hist };
+}
+
+function calcBOLL(closes, window, numStd) {
+  const mid = sma(closes, window);
+  const upper = [], lower = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < window - 1) { upper.push(null); lower.push(null); continue; }
+    let sum = 0;
+    for (let j = 0; j < window; j++) sum += closes[i-j];
+    const m = sum / window;
+    let varSum = 0;
+    for (let j = 0; j < window; j++) varSum += (closes[i-j] - m) ** 2;
+    const std = Math.sqrt(varSum / window);
+    upper.push(m + numStd * std);
+    lower.push(m - numStd * std);
+  }
+  return { mid, upper, lower };
+}
+
+function calcATR(data, period) {
+  const trs = [0];
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i];
+    const pd = data[i-1];
+    trs.push(Math.max(d.high - d.low, Math.abs(d.high - pd.close), Math.abs(d.low - pd.close)));
+  }
+  const atr = ema(trs, period);
+  return { tr: trs, atr };
+}
+
+function calcKDJ(data, n, m1, m2) {
+  let prevK = 50, prevD = 50;
+  const k = [], d = [], j = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < n - 1) { k.push(50); d.push(50); j.push(50); continue; }
+    let hh = -Infinity, ll = Infinity;
+    for (let p = 0; p < n; p++) {
+      hh = Math.max(hh, data[i-p].high);
+      ll = Math.min(ll, data[i-p].low);
+    }
+    const rsv = hh === ll ? 50 : (data[i].close - ll) / (hh - ll) * 100;
+    const curK = (prevK * (m1 - 1) + rsv) / m1;
+    const curD = (prevD * (m2 - 1) + curK) / m2;
+    const curJ = 3 * curK - 2 * curD;
+    k.push(curK); d.push(curD); j.push(curJ);
+    prevK = curK; prevD = curD;
+  }
+  return { k, d, j };
+}
+
+// ════════════════════════════════════════
+// Canvas Setup (fixed dpr handling)
+// ════════════════════════════════════════
+const X_PAD = 14; // bottom padding for x-axis labels
+
+function setupCanvas(canvas, padBottom) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const cssH = parseInt(canvas.getAttribute('height')) || rect.height || 160;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  const pb = padBottom !== undefined ? padBottom : X_PAD;
+  return { ctx, w: rect.width, h: cssH - pb };
+}
+
+// ════════════════════════════════════════
+// Draw Helpers
+// ════════════════════════════════════════
+function drawLine(ctx, data, w, h, color, lineWidth, yMin, yMax) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth || 1.5;
+  ctx.beginPath();
+  const len = data.length;
+  for (let i = 0; i < len; i++) {
+    if (data[i] === null || data[i] === undefined) continue;
+    const x = len > 1 ? (i / (len - 1)) * w : w / 2;
+    const y = h - ((data[i] - yMin) / (yMax - yMin)) * h;
+    if (i === 0 || data[i-1] === null || data[i-1] === undefined) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawDashedLine(ctx, data, w, h, color, yMin, yMax) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  const len = data.length;
+  for (let i = 0; i < len; i++) {
+    if (data[i] === null || data[i] === undefined) continue;
+    const x = len > 1 ? (i / (len - 1)) * w : w / 2;
+    const y = h - ((data[i] - yMin) / (yMax - yMin)) * h;
+    if (i === 0 || data[i-1] === null || data[i-1] === undefined) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawArea(ctx, upper, lower, w, h, color, yMin, yMax) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  let started = false;
+  const len = upper.length;
+  for (let i = 0; i < len; i++) {
+    if (upper[i] === null || lower[i] === null) continue;
+    const x = len > 1 ? (i / (len - 1)) * w : w / 2;
+    const y = h - ((upper[i] - yMin) / (yMax - yMin)) * h;
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  }
+  for (let i = lower.length - 1; i >= 0; i--) {
+    if (lower[i] === null) continue;
+    const x = len > 1 ? (i / (len - 1)) * w : w / 2;
+    const y = h - ((lower[i] - yMin) / (yMax - yMin)) * h;
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawHLine(ctx, y, w, color, dash) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(w, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawXAxis(ctx, w, h) {
+  const positions = [0, 0.25, 0.5, 0.75, 1];
+  const vl = visLen();
+  ctx.fillStyle = '#565f89';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'center';
+  for (const p of positions) {
+    const idx = viewRange.start + Math.round(p * Math.max(0, vl - 1));
+    if (idx >= 0 && idx < dateStrings.length) {
+      const d = dateStrings[idx];
+      const label = d.slice(2, 4) + d.slice(4, 6) + d.slice(6);
+      ctx.fillText(label, p * w, h + 11);
+    }
+  }
+}
+
+// ════════════════════════════════════════
+// Render Functions (use visible slices)
+// ════════════════════════════════════════
+const params = {
+  rsi: { period: 14 },
+  macd: { fast: 12, slow: 26, signal: 9 },
+  boll: { window: 20, std: 2.0 },
+  atr: { period: 14 },
+  kdj: { n: 9, m1: 3, m2: 3 }
+};
+
+const indicatorsOn = { rsi: true, macd: true, boll: true, atr: true, kdj: true };
+
+function renderPrice() {
+  const canvas = document.getElementById('canvasPrice');
+  const { ctx, w, h } = setupCanvas(canvas);
+  const allCloses = currentData.map(d => d.close);
+  const boll = calcBOLL(allCloses, params.boll.window, params.boll.std);
+
+  // Slice to visible
+  const closes = visSlice(allCloses);
+  const bUpper = visSlice(boll.upper);
+  const bLower = visSlice(boll.lower);
+  const bMid = visSlice(boll.mid);
+
+  // Y range from visible
+  let yMin = Infinity, yMax = -Infinity;
+  closes.forEach(c => { yMin = Math.min(yMin, c); yMax = Math.max(yMax, c); });
+  bUpper.forEach(v => { if (v !== null) yMax = Math.max(yMax, v); });
+  bLower.forEach(v => { if (v !== null) yMin = Math.min(yMin, v); });
+  const pad = (yMax - yMin) * 0.1 || 1;
+  yMin -= pad; yMax += pad;
+
+  // Clear
+  ctx.clearRect(0, 0, w, h + X_PAD);
+
+  // BOLL area
+  drawArea(ctx, bUpper, bLower, w, h, 'rgba(122,162,247,0.06)', yMin, yMax);
+  // BOLL bands
+  drawDashedLine(ctx, bUpper, w, h, 'rgba(247,118,142,0.5)', yMin, yMax);
+  drawDashedLine(ctx, bLower, w, h, 'rgba(158,206,106,0.5)', yMin, yMax);
+  drawLine(ctx, bMid, w, h, 'rgba(86,95,137,0.6)', 1, yMin, yMax);
+  // Price line
+  drawLine(ctx, closes, w, h, '#7aa2f7', 2, yMin, yMax);
+
+  // Last price marker
+  if (closes.length > 0) {
+    const lastVal = closes[closes.length - 1];
+    const lastY = h - ((lastVal - yMin) / (yMax - yMin)) * h;
+    ctx.fillStyle = '#7aa2f7';
+    ctx.beginPath();
+    ctx.arc(w - 1, lastY, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Y-axis labels
+  ctx.fillStyle = '#565f89';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText(yMax.toFixed(2), 4, 12);
+  ctx.fillText(yMin.toFixed(2), 4, h - 4);
+  ctx.textAlign = 'right';
+  if (closes.length > 0) {
+    ctx.fillStyle = '#7aa2f7';
+    ctx.fillText(closes[closes.length-1].toFixed(2), w - 6, 12);
+  }
+
+  // X-axis
+  drawXAxis(ctx, w, h);
+}
+
+function renderRSI() {
+  const canvas = document.getElementById('canvasRSI');
+  const { ctx, w, h } = setupCanvas(canvas);
+  const allCloses = currentData.map(d => d.close);
+  const rsi = calcRSI(allCloses, params.rsi.period);
+  const visRsi = visSlice(rsi);
+
+  ctx.clearRect(0, 0, w, h + X_PAD);
+
+  // Background zones
+  ctx.fillStyle = 'rgba(247,118,142,0.04)';
+  ctx.fillRect(0, 0, w, h * 0.3);
+  ctx.fillStyle = 'rgba(158,206,106,0.04)';
+  ctx.fillRect(0, h * 0.7, w, h * 0.3);
+
+  // Reference lines
+  const y70 = h * 0.3, y30 = h * 0.7, y50 = h * 0.5;
+  drawHLine(ctx, y70, w, 'rgba(247,118,142,0.3)', [4,3]);
+  drawHLine(ctx, y30, w, 'rgba(158,206,106,0.3)', [4,3]);
+  drawHLine(ctx, y50, w, 'rgba(86,95,137,0.2)', [2,4]);
+
+  // RSI line
+  drawLine(ctx, visRsi, w, h, '#bb9af7', 1.5, 0, 100);
+
+  // Labels
+  ctx.fillStyle = '#565f89';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('70', 4, y70 - 2);
+  ctx.fillText('30', 4, y30 - 2);
+  ctx.fillText('50', 4, y50 - 2);
+  ctx.textAlign = 'right';
+  if (visRsi.length > 0) {
+    const v = visRsi[visRsi.length - 1];
+    ctx.fillStyle = v > 70 ? '#f7768e' : v < 30 ? '#9ece6a' : '#bb9af7';
+    ctx.fillText(v.toFixed(1), w - 4, 12);
+  }
+
+  drawXAxis(ctx, w, h);
+}
+
+function renderMACD() {
+  const canvas = document.getElementById('canvasMACD');
+  const { ctx, w, h } = setupCanvas(canvas);
+  const allCloses = currentData.map(d => d.close);
+  const macd = calcMACD(allCloses, params.macd.fast, params.macd.slow, params.macd.signal);
+
+  const dif = visSlice(macd.dif);
+  const dea = visSlice(macd.dea);
+  const hist = visSlice(macd.hist);
+
+  ctx.clearRect(0, 0, w, h + X_PAD);
+
+  let yMin = Infinity, yMax = -Infinity;
+  [...dif, ...dea, ...hist].forEach(v => {
+    yMin = Math.min(yMin, v);
+    yMax = Math.max(yMax, v);
+  });
+  const pad = (yMax - yMin) * 0.1 || 1;
+  yMin -= pad; yMax += pad;
+
+  // Zero line
+  const zeroY = h - ((0 - yMin) / (yMax - yMin)) * h;
+  drawHLine(ctx, zeroY, w, 'rgba(86,95,137,0.3)', null);
+
+  // Histogram
+  const barW = hist.length > 1 ? w / hist.length * 0.7 : 6;
+  for (let i = 0; i < hist.length; i++) {
+    const x = hist.length > 1 ? (i / (hist.length - 1)) * w - barW / 2 : w / 2 - barW / 2;
+    const y = h - ((hist[i] - yMin) / (yMax - yMin)) * h;
+    const barH = Math.abs(y - zeroY);
+    ctx.fillStyle = hist[i] >= 0 ? 'rgba(247,118,142,0.6)' : 'rgba(158,206,106,0.6)';
+    ctx.fillRect(x, Math.min(y, zeroY), barW, barH);
+  }
+
+  // DIF & DEA lines
+  drawLine(ctx, dif, w, h, '#e0af68', 1.5, yMin, yMax);
+  drawLine(ctx, dea, w, h, '#bb9af7', 1.5, yMin, yMax);
+
+  // Labels
+  ctx.fillStyle = '#565f89';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText(yMax.toFixed(4), 4, 10);
+  ctx.fillText(yMin.toFixed(4), 4, h - 2);
+
+  drawXAxis(ctx, w, h);
+}
+
+function renderATR() {
+  const canvas = document.getElementById('canvasATR');
+  const { ctx, w, h } = setupCanvas(canvas);
+  const atr = calcATR(currentData, params.atr.period);
+  const visTr = visSlice(atr.tr);
+  const visAtr = visSlice(atr.atr);
+
+  ctx.clearRect(0, 0, w, h + X_PAD);
+
+  let yMax = -Infinity;
+  visTr.forEach(v => yMax = Math.max(yMax, v));
+  yMax *= 1.1 || 1;
+
+  // TR bars
+  const barW = visTr.length > 1 ? w / visTr.length * 0.7 : 6;
+  for (let i = 0; i < visTr.length; i++) {
+    const x = visTr.length > 1 ? (i / (visTr.length - 1)) * w - barW / 2 : w / 2 - barW / 2;
+    const barH = (visTr[i] / yMax) * h;
+    ctx.fillStyle = 'rgba(255,158,100,0.15)';
+    ctx.fillRect(x, h - barH, barW, barH);
+  }
+
+  // ATR line
+  drawLine(ctx, visAtr, w, h, '#ff9e64', 1.5, 0, yMax);
+
+  ctx.fillStyle = '#565f89';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText(yMax.toFixed(3), 4, 10);
+  ctx.textAlign = 'right';
+  if (visAtr.length > 0) {
+    ctx.fillStyle = '#ff9e64';
+    ctx.fillText(visAtr[visAtr.length - 1].toFixed(3), w - 4, 10);
+  }
+
+  drawXAxis(ctx, w, h);
+}
+
+function renderKDJ() {
+  const canvas = document.getElementById('canvasKDJ');
+  const { ctx, w, h } = setupCanvas(canvas);
+  const kdj = calcKDJ(currentData, params.kdj.n, params.kdj.m1, params.kdj.m2);
+  const visK = visSlice(kdj.k);
+  const visD = visSlice(kdj.d);
+  const visJ = visSlice(kdj.j);
+
+  ctx.clearRect(0, 0, w, h + X_PAD);
+
+  // Reference lines
+  drawHLine(ctx, h * 0.2, w, 'rgba(247,118,142,0.2)', [3,3]);
+  drawHLine(ctx, h * 0.8, w, 'rgba(158,206,106,0.2)', [3,3]);
+
+  // K, D, J lines
+  drawLine(ctx, visK, w, h, '#7aa2f7', 1.5, 0, 100);
+  drawLine(ctx, visD, w, h, '#e0af68', 1.5, 0, 100);
+  drawLine(ctx, visJ, w, h, '#7dcfff', 1.5, 0, 100);
+
+  ctx.fillStyle = '#565f89';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('80', 4, h * 0.2 - 2);
+  ctx.fillText('20', 4, h * 0.8 - 2);
+
+  drawXAxis(ctx, w, h);
+}
+
+// ════════════════════════════════════════
+// Navigator (overview bar)
+// ════════════════════════════════════════
+function renderNavigator() {
+  const canvas = document.getElementById('canvasNav');
+  if (!canvas) return;
+  const { ctx, w, h } = setupCanvas(canvas, 0);
+  const allCloses = currentData.map(d => d.close);
+  const total = allCloses.length;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Background
+  ctx.fillStyle = 'rgba(26,27,38,0.5)';
+  ctx.fillRect(0, 0, w, h);
+
+  let yMin = Infinity, yMax = -Infinity;
+  allCloses.forEach(c => { yMin = Math.min(yMin, c); yMax = Math.max(yMax, c); });
+  const pad = (yMax - yMin) * 0.1 || 1;
+  yMin -= pad; yMax += pad;
+
+  // Mini price line
+  ctx.strokeStyle = 'rgba(122,162,247,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < total; i++) {
+    const x = total > 1 ? (i / (total - 1)) * w : 0;
+    const y = h - ((allCloses[i] - yMin) / (yMax - yMin)) * h;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // View range rectangle
+  const x1 = total > 1 ? (viewRange.start / (total - 1)) * w : 0;
+  const x2 = total > 1 ? (viewRange.end / (total - 1)) * w : w;
+
+  // Fill
+  ctx.fillStyle = 'rgba(122,162,247,0.12)';
+  ctx.fillRect(x1, 0, x2 - x1, h);
+
+  // Border
+  ctx.strokeStyle = 'rgba(122,162,247,0.6)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  ctx.strokeRect(x1, 0, x2 - x1, h);
+
+  // Edge handles
+  ctx.fillStyle = 'rgba(122,162,247,0.9)';
+  ctx.fillRect(x1 - 2, h * 0.25, 4, h * 0.5);
+  ctx.fillRect(x2 - 2, h * 0.25, 4, h * 0.5);
+}
+
+// ════════════════════════════════════════
+// Render All
+// ════════════════════════════════════════
+function renderAll() {
+  clampViewRange();
+  renderPrice();
+  if (indicatorsOn.rsi) renderRSI();
+  if (indicatorsOn.macd) renderMACD();
+  if (indicatorsOn.atr) renderATR();
+  if (indicatorsOn.kdj) renderKDJ();
+  renderNavigator();
+  updateViewInfo();
+}
+
+// ════════════════════════════════════════
+// Zoom / Pan Handlers
+// ════════════════════════════════════════
+let chartDragState = null; // { startClientX, startRange, range, canvasWidth }
+
+function attachChartZoom(canvas) {
+  // Wheel zoom
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mouseRatio = (e.clientX - rect.left) / rect.width;
+    const factor = e.deltaY > 0 ? 1.15 : 0.87;
+    zoomAtPosition(mouseRatio, factor);
+  }, { passive: false });
+
+  // Drag pan
+  canvas.addEventListener('mousedown', function(e) {
+    const rect = canvas.getBoundingClientRect();
+    const range = viewRange.end - viewRange.start;
+    chartDragState = {
+      startClientX: e.clientX,
+      startRange: { start: viewRange.start, end: viewRange.end },
+      range: range,
+      canvasWidth: rect.width
+    };
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+}
+
+// Single window-level mousemove for chart drag
+window.addEventListener('mousemove', function(e) {
+  if (!chartDragState) return;
+  const dx = e.clientX - chartDragState.startClientX;
+  const dataPerPx = chartDragState.range / chartDragState.canvasWidth;
+  const shift = Math.round(-dx * dataPerPx);
+  const total = totalLen();
+  const newStart = Math.max(0, Math.min(total - chartDragState.range, chartDragState.startRange.start + shift));
+  viewRange.start = newStart;
+  viewRange.end = newStart + chartDragState.range;
+  renderAll();
+});
+
+window.addEventListener('mouseup', function() {
+  if (chartDragState) {
+    document.querySelectorAll('canvas').forEach(function(c) { c.style.cursor = ''; });
+    chartDragState = null;
+  }
+  if (navDragState) {
+    navDragState = null;
+  }
+});
+
+// ════════════════════════════════════════
+// Navigator Handlers
+// ════════════════════════════════════════
+let navDragState = null; // { mode, startClientX, startRange, canvasWidth }
+
+function attachNavHandlers(canvas) {
+  const EDGE_THRESHOLD = 8; // pixels
+
+  canvas.addEventListener('mousemove', function(e) {
+    if (navDragState) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const total = totalLen();
+    const x1 = total > 1 ? (viewRange.start / (total - 1)) * rect.width : 0;
+    const x2 = total > 1 ? (viewRange.end / (total - 1)) * rect.width : rect.width;
+
+    if (Math.abs(x - x1) < EDGE_THRESHOLD || Math.abs(x - x2) < EDGE_THRESHOLD) {
+      canvas.style.cursor = 'ew-resize';
+    } else if (x > x1 && x < x2) {
+      canvas.style.cursor = 'grab';
+    } else {
+      canvas.style.cursor = 'pointer';
+    }
+  });
+
+  canvas.addEventListener('mousedown', function(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const total = totalLen();
+    const x1 = total > 1 ? (viewRange.start / (total - 1)) * rect.width : 0;
+    const x2 = total > 1 ? (viewRange.end / (total - 1)) * rect.width : rect.width;
+
+    let mode;
+    if (Math.abs(x - x1) < EDGE_THRESHOLD) mode = 'resize-left';
+    else if (Math.abs(x - x2) < EDGE_THRESHOLD) mode = 'resize-right';
+    else if (x > x1 && x < x2) mode = 'pan';
+    else {
+      // Click outside: jump to position, center view
+      const ratio = x / rect.width;
+      const range = viewRange.end - viewRange.start;
+      viewRange.start = Math.max(0, Math.min(total - range, Math.round(ratio * total - range / 2)));
+      viewRange.end = viewRange.start + range;
+      syncTimeRangeButtons();
+      renderAll();
+      return;
+    }
+
+    navDragState = {
+      mode: mode,
+      startClientX: e.clientX,
+      startRange: { start: viewRange.start, end: viewRange.end },
+      canvasWidth: rect.width
+    };
+    canvas.style.cursor = mode === 'pan' ? 'grabbing' : 'ew-resize';
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', function(e) {
+    if (!navDragState) return;
+    const dx = e.clientX - navDragState.startClientX;
+    const total = totalLen();
+    const dataPerPx = total / navDragState.canvasWidth;
+    const shift = Math.round(dx * dataPerPx);
+    const sr = navDragState.startRange;
+
+    if (navDragState.mode === 'pan') {
+      const range = sr.end - sr.start;
+      viewRange.start = Math.max(0, Math.min(total - range, sr.start + shift));
+      viewRange.end = viewRange.start + range;
+    } else if (navDragState.mode === 'resize-left') {
+      viewRange.start = Math.max(0, Math.min(sr.end - MIN_VIS, sr.start + shift));
+    } else if (navDragState.mode === 'resize-right') {
+      viewRange.end = Math.max(sr.start + MIN_VIS, Math.min(total, sr.end + shift));
+    }
+    syncTimeRangeButtons();
+    renderAll();
+  });
+}
+
+// ════════════════════════════════════════
+// Parameter Interactivity (unchanged)
+// ════════════════════════════════════════
+function toggleIndicator(el) {
+  const card = el.closest('.indicator-card');
+  const ind = card.dataset.indicator;
+  el.classList.toggle('on');
+  card.classList.toggle('off');
+  indicatorsOn[ind] = el.classList.contains('on');
+
+  const chartMap = { rsi: 'chart-rsi', macd: 'chart-macd', atr: 'chart-atr', kdj: 'chart-kdj' };
+  if (chartMap[ind]) {
+    document.getElementById(chartMap[ind]).style.display = indicatorsOn[ind] ? '' : 'none';
+  }
+}
+
+function onParamChange(ind, param, value) {
+  value = parseFloat(value);
+  params[ind][param] = value;
+
+  const valEl = document.getElementById(ind + '-' + param + '-val');
+  if (valEl) valEl.textContent = param === 'std' ? value.toFixed(1) : value;
+
+  const slider = document.getElementById(ind + '-' + param);
+  if (slider) slider.value = value;
+
+  if (ind === 'rsi') document.getElementById('rsi-period-label').textContent = params.rsi.period;
+  if (ind === 'macd') document.getElementById('macd-params-label').textContent = params.macd.fast + ',' + params.macd.slow + ',' + params.macd.signal;
+  if (ind === 'atr') document.getElementById('atr-period-label').textContent = params.atr.period;
+  if (ind === 'kdj') document.getElementById('kdj-params-label').textContent = params.kdj.n + ',' + params.kdj.m1 + ',' + params.kdj.m2;
+
+  clearTimeout(window._redrawTimer);
+  window._redrawTimer = setTimeout(renderAll, 200);
+}
+
+function setParam(ind, param, value) {
+  onParamChange(ind, param, value);
+  const card = document.querySelector('[data-indicator="' + ind + '"]');
+  card.querySelectorAll('.preset-val').forEach(function(v) { v.classList.remove('active'); });
+  if (event && event.target) event.target.classList.add('active');
+}
+
+function setMACD(f, s, sig) {
+  setParam('macd', 'fast', f);
+  setParam('macd', 'slow', s);
+  setParam('macd', 'signal', sig);
+  document.querySelector('[data-indicator="macd"] .preset-values').querySelectorAll('.preset-val').forEach(function(v) { v.classList.remove('active'); });
+  if (event && event.target) event.target.classList.add('active');
+}
+
+function setBOLL(w, std) {
+  setParam('boll', 'window', w);
+  setParam('boll', 'std', std);
+  document.querySelector('[data-indicator="boll"] .preset-values').querySelectorAll('.preset-val').forEach(function(v) { v.classList.remove('active'); });
+  if (event && event.target) event.target.classList.add('active');
+}
+
+function setKDJ(n, m1, m2) {
+  setParam('kdj', 'n', n);
+  setParam('kdj', 'm1', m1);
+  setParam('kdj', 'm2', m2);
+  document.querySelector('[data-indicator="kdj"] .preset-values').querySelectorAll('.preset-val').forEach(function(v) { v.classList.remove('active'); });
+  if (event && event.target) event.target.classList.add('active');
+}
+
+// Preset switching
+document.querySelectorAll('.preset-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    const preset = btn.dataset.preset;
+    const presets = {
+      default: { rsi: {period:14}, macd: {fast:12,slow:26,signal:9}, boll: {window:20,std:2.0}, atr: {period:14}, kdj: {n:9,m1:3,m2:3} },
+      short_term: { rsi: {period:6}, macd: {fast:5,slow:13,signal:4}, boll: {window:10,std:1.5}, atr: {period:7}, kdj: {n:5,m1:2,m2:2} },
+      long_term: { rsi: {period:24}, macd: {fast:19,slow:39,signal:9}, boll: {window:30,std:2.5}, atr: {period:21}, kdj: {n:14,m1:3,m2:3} }
+    };
+    const p = presets[preset];
+    for (const ind in p) {
+      for (const param in p[ind]) {
+        onParamChange(ind, param, p[ind][param]);
+      }
+    }
+  });
+});
+
+// Time range buttons
+document.querySelectorAll('.tr-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.tr-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    setTimeRange(parseInt(btn.dataset.range));
+  });
+});
+
+// Stock switching
+document.getElementById('stockSelect').addEventListener('change', function(e) {
+  if (e.target.value === 'upload') {
+    alert('CSV 上传功能将在 v1.1 版本实现');
+    e.target.value = currentData === stockData.boc ? 'boc' : 'moutai';
+    return;
+  }
+  currentData = stockData[e.target.value];
+  viewRange = { start: 0, end: totalLen() };
+  // Apply default time range (1 year)
+  const defaultDays = 365;
+  if (totalLen() > defaultDays) {
+    viewRange.start = totalLen() - defaultDays;
+  }
+  clampViewRange();
+
+  const lastClose = currentData[currentData.length - 1].close;
+  const lastPct = currentData[currentData.length - 1].pct;
+  const isMoutai = e.target.value === 'moutai';
+  document.getElementById('hdrPrice').textContent = '\u00A5' + (isMoutai ? lastClose.toFixed(0) : lastClose.toFixed(2));
+  document.getElementById('hdrPct').textContent = (lastPct >= 0 ? '+' : '') + lastPct.toFixed(2) + '%';
+
+  syncTimeRangeButtons();
+  renderAll();
+});
+
+// ════════════════════════════════════════
+// Init
+// ════════════════════════════════════════
+window.addEventListener('load', function() {
+  // Set default view to last 1 year
+  if (totalLen() > 365) {
+    viewRange.start = totalLen() - 365;
+    viewRange.end = totalLen();
+  }
+  clampViewRange();
+
+  // Attach zoom/pan handlers to all chart canvases
+  ['canvasPrice', 'canvasRSI', 'canvasMACD', 'canvasATR', 'canvasKDJ'].forEach(function(id) {
+    const c = document.getElementById(id);
+    if (c) attachChartZoom(c);
+  });
+
+  // Attach navigator handlers
+  const nav = document.getElementById('canvasNav');
+  if (nav) attachNavHandlers(nav);
+
+  syncTimeRangeButtons();
+  renderAll();
+});
+
+// Resize handler
+let resizeTimer;
+window.addEventListener('resize', function() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderAll, 200);
+});
+</script>
+
+</body>
+</html>
